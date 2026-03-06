@@ -1,13 +1,13 @@
 from tkinter import *
 from testDataOpener import training_data
-from neuralModel import NeuralNetwork, trained_model
+from neuralModel import NeuralNetwork
 import threading
 
 
 
 
-CANVAS_HEIGHT = 840
-CANVAS_WIDTH = 840
+CANVAS_HEIGHT = 420
+CANVAS_WIDTH = 420
 
 WINDOW_WIDTH = 2000
 WINDOW_HEIGHT = 1000
@@ -17,6 +17,7 @@ COUNT = 0
 class DrawnNumberVis:
     def __init__(self):
         self.model = NeuralNetwork()
+        self.model.load_parameters()
         self.root = Tk()
         self.root.configure(bg="black")
         self.root.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")

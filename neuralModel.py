@@ -1,6 +1,8 @@
 import numpy as np
 from layer import Layer
 from testDataOpener import training_data, validation_data
+from timer import timeit
+import random
 
 '''
 allow for neural network to allow inputs in the form of batches of vectors instead of just one vector
@@ -25,10 +27,18 @@ class NeuralNetwork:
             self.input_batch = self.input_batch.reshape(784,1)
             
     def forward_propogation(self):
-        self.first_layer.forward(self.input_batch)
-        self.second_layer.forward(self.first_layer.a_neurons)
+        # self.first_layer.forward(self.input_batch)
+        # self.second_layer.forward(self.first_layer.a_neurons)
+        # self.output_layer.forward(self.second_layer.a_neurons)
 
+        self.first_layer.forward(self.input_batch)
+        assert not np.isnan(self.first_layer.a_neurons).any(), "NaN in layer 1"
+        self.second_layer.forward(self.first_layer.a_neurons)
+        assert not np.isnan(self.second_layer.a_neurons).any(), "NaN in layer 2"
         self.output_layer.forward(self.second_layer.a_neurons)
+        assert not np.isnan(self.output_layer.a_neurons).any(), "NaN in output"
+
+
 
     def output(self):
 
@@ -55,7 +65,6 @@ class NeuralNetwork:
         curr_layer = [None, self.first_layer, self.second_layer, self.output_layer][layer]
         prev_layer = [None, self.first_layer, self.second_layer, self.output_layer][layer - 1]
 
-        #weights_transpose = np.transpose(curr_layer.weights).copy()
         weights_transpose = curr_layer.weights.T
         
         z_l = prev_layer.z_neurons
@@ -63,106 +72,97 @@ class NeuralNetwork:
 
         return np.dot(weights_transpose, delta) * relu_grad
     
-    def weight_grad(self, batch, exp_batch, layer):
-        self.input(batch)
-        self.forward_propogation()
-
-        delta_3 = self.softmax_cross_entropy_grad(exp_batch)
-        delta_2 = self.backward_propogation(delta_3, 3)
-        delta_1 = self.backward_propogation(delta_2, 2)
-
-        batch_size = len(batch)
-
-        delta_l = [
-            delta_1,
-            delta_2,
-            delta_3
-        ]
-
+    def weight_grad(self, batch, layer, delta_l, batch_size):
         prev_layer = [self.input_batch, self.first_layer, self.second_layer, self.output_layer][layer - 1]
 
         if layer == 1:
-            weight_gradients = np.dot(delta_l[layer - 1], prev_layer.T) / batch_size
+            weight_gradients = np.dot(delta_l, prev_layer.T) / batch_size
         else:
-            weight_gradients = np.dot(delta_l[layer - 1], prev_layer.a_neurons.T) / batch_size
+            weight_gradients = np.dot(delta_l, prev_layer.a_neurons.T) / batch_size
 
         return weight_gradients
     
-    def bias_grad(self, batch, exp_batch, layer):
-        self.input(batch)
-        self.forward_propogation()
-
-        delta_3 = self.softmax_cross_entropy_grad(exp_batch)
-        delta_2 = self.backward_propogation(delta_3, 3)
-        delta_1 = self.backward_propogation(delta_2, 2)
-
-        batch_size = len(batch)
-
-        delta_l = [
-            delta_1,
-            delta_2,
-            delta_3
-        ]
-
-
-        bias_gradients = np.sum(delta_l[layer - 1], axis = 1, keepdims=True) / batch_size
-
+    def bias_grad(self, batch, delta_l, batch_size):
+        bias_gradients = np.sum(delta_l, axis = 1, keepdims=True) / batch_size
         return bias_gradients
 
-def trained_model():
-    model = NeuralNetwork() 
+    def save_parameters(self):
+        np.savez(
+            'params.npz', 
+            W1 = self.first_layer.weights, B1 = self.first_layer.biases,
+            W2 = self.second_layer.weights, B2 = self.second_layer.biases,
+            W3 = self.output_layer.weights, B3 = self.output_layer.biases,
+            )
+   
+    def load_parameters(self):
+        with np.load('params.npz') as data:
+            self.first_layer.weights = data['W1']
+            self.first_layer.biases = data['B1']
+            self.second_layer.weights = data['W2']
+            self.second_layer.biases = data['B2']
+            self.output_layer.weights = data['W3']
+            self.output_layer.biases = data['B3']
 
-    learning_rate = 0.1
+    @timeit
+    def stoch_grad_descent(self, learning_rate, training_data, batch_size, epoch):
+        for _ in range(epoch):
+            # shuffle training data
+            sample_data = training_data[0]
+            exp_sample_data = training_data[1]
 
-    layers = ["first_layer", "second_layer", "output_layer"]
+            training_data_z = list(zip(sample_data, exp_sample_data))
+            random.shuffle(training_data_z)
 
-    for n in range(5000):
+            sample_data_shuffled , exp_sample_data_shuffled = zip(*training_data_z)
+            sample_data_shuffled = np.array(sample_data_shuffled)
+            exp_sample_data_shuffled = np.array(exp_sample_data_shuffled)
 
-        batch = training_data[0][n*10 : (n+1)*10]
-        exp_batch = training_data[1][n*10 : (n+1)*10]
+            curr_sample_ptr = 0
 
-        for layer in range(1, 3):
-            layer_string = layers[layer-1]
+            while (curr_sample_ptr + batch_size) < 50000:
+                batch = sample_data_shuffled[curr_sample_ptr : curr_sample_ptr + batch_size]
+                exp_batch = exp_sample_data_shuffled[curr_sample_ptr : curr_sample_ptr + batch_size]
 
-            bias_grad = learning_rate * model.bias_grad(batch, exp_batch, layer)
-            weight_grad = learning_rate * model.weight_grad(batch, exp_batch, layer)
+                self.input(batch)
+                self.forward_propogation()
 
-            getattr(model, layer_string).weights -= weight_grad
-            getattr(model, layer_string).biases -= bias_grad
-    return model
+                delta_l = self.softmax_cross_entropy_grad(exp_batch)
+
+                for i, layer in enumerate(["output_layer", "second_layer", "first_layer"]):
+                    bias_grad = learning_rate * self.bias_grad(batch, delta_l, batch_size)
+                    weight_grad = learning_rate * self.weight_grad(batch, (3-i), delta_l, batch_size)
+                    getattr(self, layer).weights -= weight_grad
+                    getattr(self, layer).biases -= bias_grad
+                    if i != 2:
+                        delta_l = self.backward_propogation(delta_l, (3 - i))
+
+                curr_sample_ptr += batch_size
 
 
-
-test_script = False
+test_script = True
 
 if __name__ == "__main__" and not test_script:
     batch = training_data[0][0:4]
     exp_batch = training_data[1][0:4]
 
     model = NeuralNetwork() 
-
-    learning_rate = 0.1
-
-    layers = ["first_layer", "second_layer", "output_layer"]
-
-    for n in range(5000):
-
-        batch = training_data[0][n*10 : (n+1)*10]
-        exp_batch = training_data[1][n*10 : (n+1)*10]
-
-        for layer in range(1, 3):
-            layer_string = layers[layer-1]
-
-            bias_grad = learning_rate * model.bias_grad(batch, exp_batch, layer)
-            weight_grad = learning_rate * model.weight_grad(batch, exp_batch, layer)
-
-            getattr(model, layer_string).weights -= weight_grad
-            getattr(model, layer_string).biases -= bias_grad
+    
 
     model.input(training_data[0][0:100])
     model.forward_propogation()
     
+    
     print(np.exp(np.mean(-model.cross_entropy_cost(training_data[1][0:100], model.output_layer.a_neurons))))
+
+    model.stoch_grad_descent(0.01, training_data, 32, 40)
+
+    model.input(training_data[0][0:100])
+    model.forward_propogation()
+    
+    model.save_parameters()
+
+    print(np.exp(np.mean(-model.cross_entropy_cost(training_data[1][0:100], model.output_layer.a_neurons))))
+import time
 
 if __name__ == "__main__" and test_script:
     model = NeuralNetwork()
@@ -170,25 +170,19 @@ if __name__ == "__main__" and test_script:
     batch = training_data[0][0:10]
     exp_batch = training_data[1][0:10]
 
-    model.input(batch)
+    model.load_parameters()
 
-    model.forward_propogation()
+    tc = 0
 
-    weight_gradL3 = model.weight_grad(batch, exp_batch, 3)
-    weight_gradL2 = model.weight_grad(batch, exp_batch, 2)
-    weight_gradL1 = model.weight_grad(batch, exp_batch, 1)
+    while True:
+        model.input(validation_data[0][tc])
+        model.forward_propogation()
 
-    print(np.max(weight_gradL3))
-    print(np.max(weight_gradL2))
-    print(np.max(weight_gradL1))
+        print(f"Exp, {validation_data[1][tc]}, Actual, {model.output()}", end = "")
+        if validation_data[1][tc] != model.output()[0]:
+            print("            FAIL")
+        print("\n")
 
+        time.sleep(0.1)
 
-    print("")
-
-    bias_gradL3 = model.bias_grad(batch, exp_batch, 3)
-    bias_gradL2 = model.bias_grad(batch, exp_batch, 2)
-    bias_gradL1 = model.bias_grad(batch, exp_batch, 1)
-
-    print(np.max(bias_gradL3))
-    print(np.max(bias_gradL2))
-    print(np.max(bias_gradL1))
+        tc += 1

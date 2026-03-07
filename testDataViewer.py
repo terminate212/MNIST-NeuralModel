@@ -82,7 +82,7 @@ class DrawnNumberVis:
         #self.model = NeuralNetwork()
 
         self.model.input(data)
-        self.model.forward_propogation()
+        self.model.forward_pass()
         return self.model.output()
 
 

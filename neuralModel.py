@@ -3,7 +3,9 @@ from layer import Layer
 from testDataOpener import training_data, validation_data, test_data
 from timer import timeit
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 import random
+import copy
 
 class NeuralNetwork:
     def __init__(self, h_layer1_size, h_layer2_size):
@@ -89,8 +91,12 @@ class NeuralNetwork:
             self.output_layer.biases = data['B3']
 
     @timeit
-    def stoch_grad_descent(self, learning_rate, training_data, batch_size, epoch):
-        for _ in tqdm(range(epoch)):
+    def stoch_grad_descent(self, learning_rate, training_data, batch_size, epochs, warm_up = False):
+        acc_over_training = []
+        cross_entropy_cost_over_training = []
+        base_learning_rate = copy.deepcopy(learning_rate)
+        
+        for epoch in tqdm(range(epochs)):
             sample_data = training_data[0]
             exp_sample_data = training_data[1]
 
@@ -121,8 +127,22 @@ class NeuralNetwork:
                         delta_l = self.backward_propagation(delta_l, (3 - i))
 
                 curr_sample_ptr += batch_size
+            acc_over_training.append(self.classification_acc(validation_data, True))
+            cross_entropy_cost_over_training.append(self.cross_entropy_loss_mean(validation_data))
 
-    def classification_acc(self, sample_set):
+            if epoch % 3 == 0 and warm_up:
+                learning_rate += base_learning_rate
+
+        
+        return acc_over_training, cross_entropy_cost_over_training
+
+    def cross_entropy_loss_mean(self, sample_set):
+        model.input(sample_set[0])
+        model.forward_pass()
+
+        return float(np.mean(self.cross_entropy_cost(sample_set[1], self.output_layer.a_neurons)))
+
+    def classification_acc(self, sample_set, numerical = False):
         tc = 0
         fails = 0
 
@@ -132,9 +152,36 @@ class NeuralNetwork:
             if sample_set[1][tc] != self.output()[0]:
                 fails += 1
             tc += 1
+        if numerical:
+            return round((1 - (fails / len(sample_set[0])))*100, 4)
 
-        return f"{(1 - (fails / 10000))*100}% Accuracy"
+        return f"{round((1 - (fails / len(sample_set[0])))*100, 4)}% Accuracy"
 
+
+def plot_training_acc_and_loss(acc_over_training, cross_entropy_loss_over_training):
+    epochs = np.array(range(len(acc_over_training)))
+    acc_over_training = np.array(acc_over_training)
+    cross_entropy_loss_over_training = np.array(cross_entropy_loss_over_training)
+
+    min_loss = round(np.min(cross_entropy_loss_over_training), 3)
+    max_acc = np.max(acc_over_training)
+
+    plt.figure(figsize=(12, 6))
+    # left hand plot, accuracy
+    plt.subplot(1,2,1)
+    plt.plot(epochs, acc_over_training)
+    plt.xlabel("Epochs")
+    plt.ylabel("Classification Accuracy")
+    plt.title(f"Max Accuracy = {max_acc}%")
+
+    # right hand plot, loss
+    plt.subplot(1,2,2)
+    plt.plot(epochs, cross_entropy_loss_over_training)
+    plt.xlabel("Epochs")
+    plt.ylabel("Cross Entropy Loss")
+    plt.title(f"Min Loss = {min_loss}")
+
+    plt.show()
 
 test_script = False
 
@@ -142,8 +189,9 @@ if __name__ == "__main__" and not test_script:
 
     # HyperParameters
     LEARNING_RATE = 0.001
-    EPOCH = 40
+    EPOCH = 20
     BATCH_SIZE = 32
+    WARM_UP = True
 
     HIDDEN_LAYER_1_SIZE = 128
     HIDDEN_LAYER_2_SIZE = 64
@@ -152,7 +200,9 @@ if __name__ == "__main__" and not test_script:
 
     print(model.classification_acc(validation_data))
 
-    model.stoch_grad_descent(LEARNING_RATE, training_data, BATCH_SIZE, EPOCH)
+    acc_over_training, cross_entropy_loss_over_trainng = model.stoch_grad_descent(LEARNING_RATE, training_data, BATCH_SIZE, EPOCH, WARM_UP)
     model.save_parameters()
 
     print(model.classification_acc(validation_data))
+
+    plot_training_acc_and_loss(acc_over_training, cross_entropy_loss_over_trainng)

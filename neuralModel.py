@@ -8,11 +8,20 @@ import random
 import copy
 
 class NeuralNetwork:
-    def __init__(self, h_layer1_size, h_layer2_size):
-        self.input_batch = None
-        self.first_layer = Layer(784, h_layer1_size)
-        self.second_layer = Layer(h_layer1_size, h_layer2_size)
-        self.output_layer = Layer(h_layer2_size, 10, True)     
+    def __init__(self, layer_sizes):
+        self.input_batch = None 
+        self.hidden_layers : list[Layer] = []
+
+        # Add the input and output sizes
+        layer_sizes = [784] + layer_sizes + [10]
+
+        for i, layer_output_size in enumerate(layer_sizes[1:]):
+            layer_input_size = layer_sizes[i]
+            is_output_layer = (layer_output_size == 10)
+            self.hidden_layers.append(Layer(layer_input_size, layer_output_size, is_output_layer))
+
+        self.output_layer = self.hidden_layers[-1]
+
         
     def input(self, arr):    
         self.input_batch = np.transpose(np.array(arr))
@@ -21,12 +30,11 @@ class NeuralNetwork:
             self.input_batch = self.input_batch.reshape(784,1)
             
     def forward_pass(self):
-        self.first_layer.forward(self.input_batch)
-        assert not np.isnan(self.first_layer.a_neurons).any(), "NaN in layer 1"
-        self.second_layer.forward(self.first_layer.a_neurons)
-        assert not np.isnan(self.second_layer.a_neurons).any(), "NaN in layer 2"
-        self.output_layer.forward(self.second_layer.a_neurons)
-        assert not np.isnan(self.output_layer.a_neurons).any(), "NaN in output"
+        prev_layer_activation = self.input_batch
+        for i, layer in enumerate(self.hidden_layers):
+            layer.forward(prev_layer_activation)
+            assert not np.isnan(layer.a_neurons).any(), f"NaN in layer {i + 1}"
+            prev_layer_activation = layer.a_neurons
 
     def output(self):
           return np.argmax(self.output_layer.a_neurons, axis = 0)
@@ -49,8 +57,8 @@ class NeuralNetwork:
         return np.subtract(self.output_layer.a_neurons,  exp_batch)
      
     def backward_propagation(self, delta, layer = 3):
-        curr_layer = [None, self.first_layer, self.second_layer, self.output_layer][layer]
-        prev_layer = [None, self.first_layer, self.second_layer, self.output_layer][layer - 1]
+        curr_layer = ([None] + self.hidden_layers)[layer]
+        prev_layer = ([None] + self.hidden_layers)[layer - 1]
 
         weights_transpose = curr_layer.weights.T
         
@@ -60,7 +68,7 @@ class NeuralNetwork:
         return np.dot(weights_transpose, delta) * relu_grad
     
     def weight_grad(self, layer, delta_l, batch_size):
-        prev_layer = [self.input_batch, self.first_layer, self.second_layer, self.output_layer][layer - 1]
+        prev_layer = ([self.input_batch] + self.hidden_layers)[layer - 1]
 
         if layer == 1:
             weight_gradients = np.dot(delta_l, prev_layer.T) / batch_size
@@ -74,21 +82,22 @@ class NeuralNetwork:
         return bias_gradients
 
     def save_parameters(self):
-        np.savez(
-            'params.npz', 
-            W1 = self.first_layer.weights, B1 = self.first_layer.biases,
-            W2 = self.second_layer.weights, B2 = self.second_layer.biases,
-            W3 = self.output_layer.weights, B3 = self.output_layer.biases,
-            )
+        parameters = {}
+
+        for i, layer in enumerate(self.hidden_layers):
+            parameters[f"W{i}"] = layer.weights
+            parameters[f"B{i}"] = layer.biases
+
+        np.savez('params.npz', **parameters)
    
     def load_parameters(self):
         with np.load('params.npz') as data:
-            self.first_layer.weights = data['W1']
-            self.first_layer.biases = data['B1']
-            self.second_layer.weights = data['W2']
-            self.second_layer.biases = data['B2']
-            self.output_layer.weights = data['W3']
-            self.output_layer.biases = data['B3']
+            for i, layer in enumerate(self.hidden_layers):
+                layer_weights = data[f"W{i}"]
+                layer_biases = data[f"B{i}"]
+
+                layer.weights = layer_weights
+                layer.biases = layer_biases
 
     @timeit
     def stoch_grad_descent(self, learning_rate, training_data, batch_size, epochs, warm_up = False):
@@ -118,13 +127,19 @@ class NeuralNetwork:
 
                 delta_l = self.softmax_cross_entropy_grad(exp_batch)
 
-                for i, layer in enumerate(["output_layer", "second_layer", "first_layer"]):
+                for layer_index in reversed(range(len(self.hidden_layers))):
+
+                    layer = self.hidden_layers[layer_index]
+
                     bias_grad = learning_rate * self.bias_grad(delta_l, batch_size)
-                    weight_grad = learning_rate * self.weight_grad((3-i), delta_l, batch_size)
-                    getattr(self, layer).weights -= weight_grad
-                    getattr(self, layer).biases -= bias_grad
-                    if i != 2:
-                        delta_l = self.backward_propagation(delta_l, (3 - i))
+                    weight_grad = learning_rate * self.weight_grad(layer_index + 1, delta_l, batch_size)
+
+                    layer.weights -= weight_grad
+                    layer.biases -= bias_grad
+
+                    if layer_index != 0:
+                        delta_l = self.backward_propagation(delta_l, layer_index + 1)
+
 
                 curr_sample_ptr += batch_size
             acc_over_training.append(self.classification_acc(validation_data, True))
@@ -137,8 +152,8 @@ class NeuralNetwork:
         return acc_over_training, cross_entropy_cost_over_training
 
     def cross_entropy_loss_mean(self, sample_set):
-        model.input(sample_set[0])
-        model.forward_pass()
+        self.input(sample_set[0])
+        self.forward_pass()
 
         return float(np.mean(self.cross_entropy_cost(sample_set[1], self.output_layer.a_neurons)))
 
@@ -188,15 +203,13 @@ test_script = False
 if __name__ == "__main__" and not test_script:
 
     # HyperParameters
-    LEARNING_RATE = 0.001
-    EPOCH = 20
-    BATCH_SIZE = 32
+    LEARNING_RATE = 0.0001
+    EPOCH = 40
+    BATCH_SIZE = 32 
     WARM_UP = True
+    HIDDEN_LAYER_SIZES = [128, 64, 32, 16]
 
-    HIDDEN_LAYER_1_SIZE = 128
-    HIDDEN_LAYER_2_SIZE = 64
-
-    model = NeuralNetwork(HIDDEN_LAYER_1_SIZE, HIDDEN_LAYER_2_SIZE) 
+    model = NeuralNetwork(HIDDEN_LAYER_SIZES) 
 
     print(model.classification_acc(validation_data))
 
